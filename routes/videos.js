@@ -1,12 +1,12 @@
-import express from 'express';
-import {
-    getVideos,
-    getVideoById,
-} from '../controllers/video-controller.js';
+// routes/videos.js
+import express from 'express'
+import { getVideos, getVideoById, createVideo } from '../controllers/video-controller.js';
+import { upload } from '../middleware/upload.js';
 
 const router = express.Router();
 
-router.get('/api/videos', getVideos);
-router.get('/api/videos/:id', getVideoById);
+router.get('/videos', getVideos);
+router.get('/videos/:id', getVideoById);
+router.post('/videos/create', upload, createVideo);
 
 export default router;
