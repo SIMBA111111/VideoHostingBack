@@ -8,6 +8,7 @@ import {createMasterM3U8File} from '../services/video/createMasterM3U8File.ts'
 import ffmpeg from "fluent-ffmpeg";
 import path from "path";
 import fs from 'fs'
+import { exec } from "child_process";
 
 export const getVideos = async (req, res) => {
     try {
@@ -103,28 +104,34 @@ export const createVideo = async (req, res) => {
   const previewUrl = `/videos/${videoId}/preview/preview.mp4`;
 
 
-  // 1. Сначала делаем HLS (как у тебя)
-  ffmpeg(absoluteVideoPath)
-    .videoFilters("scale=640:360")
-    .videoCodec("libx264")
-    .outputOptions([
-      "-preset medium",
-      "-crf 26",
-      "-c:a aac",
-      "-b:a 96k",
-      "-hls_time 4",
-      "-hls_list_size 0",
-      "-f hls",
-    ])
-    .addOption("-hls_segment_filename", hlsSegmentPath)
-    .output(hlsPlaylistPath)
-    .on("end", () => {
-      console.log("HLS video.m3u8 и сегменты созданы в:", playlistDir);
-    })
-    .on("error", (err) => {
-      console.error("Ошибка при создании HLS:", err);
-    })
-    .run();
+    const hls480Dir = path.join(playlistDir, "480");
+  const hls720Dir = path.join(playlistDir, "720");
+  const hls1080Dir = path.join(playlistDir, "1080");
+
+  if (!fs.existsSync(hls480Dir)) fs.mkdirSync(hls480Dir, { recursive: true });
+  if (!fs.existsSync(hls720Dir)) fs.mkdirSync(hls720Dir, { recursive: true });
+  if (!fs.existsSync(hls1080Dir)) fs.mkdirSync(hls1080Dir, { recursive: true });
+
+
+
+
+
+const cmd = `ffmpeg -i "${absoluteVideoPath}" \
+  -map 0:v -map 0:a -c:a aac -b:a 128k -c:v libx264 -crf 23 -preset medium -vf "scale=-2:480" -hls_time 4 -hls_playlist_type vod -hls_segment_filename "${playlistDir}/480/output_480_%04d.ts" -f hls "${playlistDir}/480/output_480.m3u8" \
+  -map 0:v -map 0:a -c:a aac -b:a 128k -c:v libx264 -crf 22 -preset medium -vf "scale=-2:720" -hls_time 4 -hls_playlist_type vod -hls_segment_filename "${playlistDir}/720/output_720_%04d.ts" -f hls "${playlistDir}/720/output_720.m3u8" \
+  -map 0:v -map 0:a -c:a aac -b:a 192k -c:v libx264 -crf 20 -preset medium -vf "scale=-2:1080" -hls_time 4 -hls_playlist_type vod -hls_segment_filename "${playlistDir}/1080/output_1080_%04d.ts" -f hls "${playlistDir}/1080/output_1080.m3u8" \
+  -master_pl_name "${playlistDir}/master.m3u8"`;
+
+exec(cmd, (error, stdout, stderr) => {
+  if (error) {
+    console.error("Ошибка ffmpeg:", error);
+    console.error("stderr:", stderr);
+    return;
+  }
+  console.log("stdout:", stdout);
+  console.log("HLS 480/720/1080 и master.m3u8 успешно созданы в:", playlistDir);
+});
+
 
 
     const subtitles = await convertSrtToVTTAndCreateM3U8(srtFilePath, playlistDir) // создаем vtt файл и m3u8 файл субтитров
