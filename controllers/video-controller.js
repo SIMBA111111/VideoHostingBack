@@ -1,6 +1,6 @@
 import { videosData } from '../data/videosData.js';
 import { pool } from '../utils/pg.ts';
-
+import {getVideoDuration} from '../utils/getVideoDuration.ts'
 import ffmpeg from "fluent-ffmpeg";
 import path from "path";
 import fs from 'fs'
@@ -54,21 +54,32 @@ export const createVideo = async (req, res) => {
   const videoId = req.videoId;
 
   const title = req.body.title;
-  const duration = Number(req.body.duration);
   const views = Number(req.body.views);
   const channel_id = req.body.channel_id;
   const channel_name = req.body.channel_name;
   const channel_avatarUrl = req.body.channel_avatarUrl;
   const fragments = JSON.parse(req.body.fragments || "[]");
 
+
 const videoUrl = `/videos/${videoId}/video/${req.files.video[0].filename}`;
 const thumbnailUrl = `/videos/${videoId}/thumbnail/${req.files.thumbnail[0].filename}`;
+
 
 const publicDir = path.join(process.cwd(), "public");
 const videoIdDir = path.join(publicDir, "videos", videoId); // /public/videos/:videoId
 
 const absoluteVideoPath = path.join(publicDir, videoUrl.replace(/^\//, ""));
 const videoDir = path.dirname(absoluteVideoPath); // /public/videos/:videoId/video
+
+  let duration;
+  try {
+    duration = await getVideoDuration(absoluteVideoPath);
+  } catch (err) {
+    console.error("Failed to get video duration:", err);
+    return res.status(500).json({ error: "Cannot read video duration" });
+  }
+  console.log('duration = ', duration);
+  
 
 const playlistDir = path.join(videoIdDir, "playlist");
 if (!fs.existsSync(playlistDir)) {
