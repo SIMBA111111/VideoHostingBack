@@ -1,6 +1,10 @@
 import { videosData } from '../data/videosData.js';
 import { pool } from '../utils/pg.ts';
 import {getVideoDuration} from '../utils/getVideoDuration.ts'
+import {createSrtSubtitleFile} from '../services/video/createSrtFile.ts'
+import {convertSrtToVTTAndCreateM3U8} from '../services/video/convertSrtToVTT.ts'
+import {createMasterM3U8File} from '../services/video/createMasterM3U8File.ts'
+
 import ffmpeg from "fluent-ffmpeg";
 import path from "path";
 import fs from 'fs'
@@ -35,9 +39,6 @@ export const getVideoById = async (req, res) => {
         const response = await pool.query('select * from videos where id=$1', [videoId])        
         const video = response.rows[0]
 
-        console.log(video);
-        
-        
         if (!video) {
             return res.status(404).json({ error: 'Video not found' });
         }
@@ -61,15 +62,15 @@ export const createVideo = async (req, res) => {
   const fragments = JSON.parse(req.body.fragments || "[]");
 
 
-const videoUrl = `/videos/${videoId}/video/${req.files.video[0].filename}`;
-const thumbnailUrl = `/videos/${videoId}/thumbnail/${req.files.thumbnail[0].filename}`;
+  const videoUrl = `/videos/${videoId}/video/${req.files.video[0].filename}`;
+  const thumbnailUrl = `/videos/${videoId}/thumbnail/${req.files.thumbnail[0].filename}`;
 
 
-const publicDir = path.join(process.cwd(), "public");
-const videoIdDir = path.join(publicDir, "videos", videoId); // /public/videos/:videoId
+  const publicDir = path.join(process.cwd(), "public");
+  const videoIdDir = path.join(publicDir, "videos", videoId); // /public/videos/:videoId
 
-const absoluteVideoPath = path.join(publicDir, videoUrl.replace(/^\//, ""));
-const videoDir = path.dirname(absoluteVideoPath); // /public/videos/:videoId/video
+  const absoluteVideoPath = path.join(publicDir, videoUrl.replace(/^\//, ""));
+  const videoDir = path.dirname(absoluteVideoPath); // /public/videos/:videoId/video
 
   let duration;
   try {
@@ -78,25 +79,28 @@ const videoDir = path.dirname(absoluteVideoPath); // /public/videos/:videoId/vid
     console.error("Failed to get video duration:", err);
     return res.status(500).json({ error: "Cannot read video duration" });
   }
-  console.log('duration = ', duration);
-  
 
-const playlistDir = path.join(videoIdDir, "playlist");
-if (!fs.existsSync(playlistDir)) {
-  fs.mkdirSync(playlistDir, { recursive: true });
-}
+  const srtFilePath = await createSrtSubtitleFile(videoIdDir, absoluteVideoPath, req.files.video[0].filename) // создаем srt файл
+  console.log('srtFilePath ============ ', srtFilePath);
 
-const hlsPlaylistPath = path.join(playlistDir, "360p.m3u8");
-const hlsSegmentPath = path.join(playlistDir, "360p_%03d.ts");
 
-// preview на уровне video, thumbnail, playlist
-const previewDir = path.join(videoIdDir, "preview");
-if (!fs.existsSync(previewDir)) {
-  fs.mkdirSync(previewDir, { recursive: true });
-}
+  const playlistDir = path.join(videoIdDir, "playlist");
+  if (!fs.existsSync(playlistDir)) {
+    fs.mkdirSync(playlistDir, { recursive: true });
+  }
 
-const previewPath = path.join(previewDir, "preview.mp4");
-const previewUrl = `/videos/${videoId}/preview/preview.mp4`;
+  const hlsPlaylistPath = path.join(playlistDir, "video.m3u8");
+  const playlistMasterPath = path.join(playlistDir, "master.m3u8");
+  const hlsSegmentPath = path.join(playlistDir, "video_fragment_%03d.ts");
+
+  // preview на уровне video, thumbnail, playlist
+  const previewDir = path.join(videoIdDir, "preview");
+  if (!fs.existsSync(previewDir)) {
+    fs.mkdirSync(previewDir, { recursive: true });
+  }
+
+  const previewPath = path.join(previewDir, "preview.mp4");
+  const previewUrl = `/videos/${videoId}/preview/preview.mp4`;
 
 
   // 1. Сначала делаем HLS (как у тебя)
@@ -115,12 +119,17 @@ const previewUrl = `/videos/${videoId}/preview/preview.mp4`;
     .addOption("-hls_segment_filename", hlsSegmentPath)
     .output(hlsPlaylistPath)
     .on("end", () => {
-      console.log("HLS 360p.m3u8 и сегменты созданы в:", playlistDir);
+      console.log("HLS video.m3u8 и сегменты созданы в:", playlistDir);
     })
     .on("error", (err) => {
       console.error("Ошибка при создании HLS:", err);
     })
     .run();
+
+
+    const subtitles = await convertSrtToVTTAndCreateM3U8(srtFilePath, playlistDir) // создаем vtt файл и m3u8 файл субтитров
+    console.log('subtitles +++++++ ', subtitles);
+    
 
   // 2. Создаём короткий 10‑секундный mp4‑превью из 5 рандомных кусков по 2 секунды
    console.log(previewUrl);
@@ -182,6 +191,9 @@ const previewUrl = `/videos/${videoId}/preview/preview.mp4`;
       .run();
   });
 
+
+  await createMasterM3U8File(playlistDir)
+
   try {
     // 1. Добавляем видео и получаем его id
     const videoRes = await pool.query(
@@ -205,7 +217,8 @@ const previewUrl = `/videos/${videoId}/preview/preview.mp4`;
         channel_id,
         thumbnailUrl,
         videoUrl,
-        hlsPlaylistPath.replace(/^.*?\\videos\\/, "/videos/"),
+        // hlsPlaylistPath.replace(/^.*?\\videos\\/, "/videos/"),
+        playlistMasterPath.replace(/^.*?\\videos\\/, "/videos/"),
         previewPath.replace(/^.*?\\videos\\/, "/videos/")
       ]
     );
